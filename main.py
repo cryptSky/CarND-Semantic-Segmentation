@@ -5,6 +5,7 @@ import helper
 import warnings
 from distutils.version import LooseVersion
 import project_tests as tests
+from moviepy.editor import VideoFileClip
 
 
 # Check TensorFlow Version
@@ -34,7 +35,17 @@ def load_vgg(sess, vgg_path):
     vgg_layer4_out_tensor_name = 'layer4_out:0'
     vgg_layer7_out_tensor_name = 'layer7_out:0'
     
-    return None, None, None, None, None
+    tf.saved_model.loader.load(sess, [vgg_tag], vgg_path)
+    
+    graph = tf.get_default_graph()
+    input = graph.get_tensor_by_name(vgg_input_tensor_name)
+    keep = graph.get_tensor_by_name(vgg_keep_prob_tensor_name)
+    layer3 = graph.get_tensor_by_name(vgg_layer3_out_tensor_name)
+    layer4 = graph.get_tensor_by_name(vgg_layer4_out_tensor_name)
+    layer7 = graph.get_tensor_by_name(vgg_layer7_out_tensor_name)
+    
+    return input, keep, layer3, layer4, layer7
+    
 tests.test_load_vgg(load_vgg, tf)
 
 
@@ -48,7 +59,29 @@ def layers(vgg_layer3_out, vgg_layer4_out, vgg_layer7_out, num_classes):
     :return: The Tensor for the last layer of output
     """
     # TODO: Implement function
-    return None
+    
+    conv7_1x1 = tf.layers.conv2d(vgg_layer7_out, num_classes, 1, padding='same', kernel_initializer= tf.random_normal_initializer(stddev=0.01), kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
+    output1 = tf.layers.conv2d_transpose(conv7_1x1, num_classes, 4, 2, padding='same', kernel_initializer= tf.random_normal_initializer(stddev=0.01), kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
+    conv4_1x1 = tf.layers.conv2d(vgg_layer4_out, num_classes, 1, padding='same',
+                               kernel_initializer=tf.random_normal_initializer(stddev=0.01),
+                               kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
+    output2 = tf.add(output1, conv4_1x1)
+    output3 = tf.layers.conv2d_transpose(output2, num_classes, 4, 2, padding='same',
+                                            kernel_initializer=tf.random_normal_initializer(stddev=0.01),
+                                            kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
+
+    conv3_1x1 = tf.layers.conv2d(vgg_layer3_out, num_classes, 1, padding='same',
+                                kernel_initializer=tf.random_normal_initializer(stddev=0.01),
+                                kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
+
+    output4 = tf.add(output3, conv3_1x1)
+    output = tf.layers.conv2d_transpose(output4, num_classes, 16, 8, padding='same',
+                                            kernel_initializer=tf.random_normal_initializer(stddev=0.01),
+                                            kernel_regularizer=tf.contrib.layers.l2_regularizer(1e-3))
+
+
+    
+    return output
 tests.test_layers(layers)
 
 
@@ -62,7 +95,15 @@ def optimize(nn_last_layer, correct_label, learning_rate, num_classes):
     :return: Tuple of (logits, train_op, cross_entropy_loss)
     """
     # TODO: Implement function
-    return None, None, None
+    logits = tf.reshape(nn_last_layer, (-1, num_classes))
+    correct_label = tf.reshape(correct_label, (-1, num_classes))
+    # define loss function
+    cross_entropy_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=correct_label))
+    # define training operation
+    optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+    train_op = optimizer.minimize(cross_entropy_loss)
+
+    return logits, train_op, cross_entropy_loss
 tests.test_optimize(optimize)
 
 
@@ -82,13 +123,28 @@ def train_nn(sess, epochs, batch_size, get_batches_fn, train_op, cross_entropy_l
     :param learning_rate: TF Placeholder for learning rate
     """
     # TODO: Implement function
-    pass
+
+    #saver = tf.train.Saver()
+    sess.run(tf.global_variables_initializer())
+
+    print("Training...")
+    print()
+    for i in range(epochs):
+        print("EPOCH {} ...".format(i + 1))
+        for image, label in get_batches_fn(batch_size):
+            _, loss = sess.run([train_op, cross_entropy_loss],
+                               feed_dict={input_image: image, correct_label: label, keep_prob: 0.5,
+                                          learning_rate: 0.0009})
+            print("Loss: = {:.3f}".format(loss))
+        print()
+        #saver.save(sess, "epoch_{}_model".format(i + 1))
 tests.test_train_nn(train_nn)
 
 
 def run():
     num_classes = 2
     image_shape = (160, 576)  # KITTI dataset uses 160x576 images
+
     data_dir = './data'
     runs_dir = './runs'
     tests.test_for_kitti_dataset(data_dir)
@@ -109,15 +165,46 @@ def run():
         # OPTIONAL: Augment Images for better results
         #  https://datascience.stackexchange.com/questions/5224/how-to-prepare-augment-images-for-neural-network
 
-        # TODO: Build NN using load_vgg, layers, and optimize function
+        epochs = 20
+        batch_size = 5
+
+        # TF placeholders
+        correct_label = tf.placeholder(tf.int32, [None, None, None, num_classes], name='correct_label')
+        learning_rate = tf.placeholder(tf.float32, name='learning_rate')
+
+        input_image, keep_prob, vgg_layer3_out, vgg_layer4_out, vgg_layer7_out = load_vgg(sess, vgg_path)
+
+        nn_last_layer = layers(vgg_layer3_out, vgg_layer4_out, vgg_layer7_out, num_classes)
+
+        logits, train_op, cross_entropy_loss = optimize(nn_last_layer, correct_label, learning_rate, num_classes)
 
         # TODO: Train NN using the train_nn function
 
+        train_nn(sess, epochs, batch_size, get_batches_fn, train_op, cross_entropy_loss, input_image,
+                 correct_label, keep_prob, learning_rate)
+
         # TODO: Save inference data using helper.save_inference_samples
-        #  helper.save_inference_samples(runs_dir, data_dir, sess, image_shape, logits, keep_prob, input_image)
+        helper.save_inference_samples(runs_dir, data_dir, sess, image_shape, logits, keep_prob, input_image)
 
-        # OPTIONAL: Apply the trained model to a video
+        #process_video(sess, logits, keep_prob, input_image, image_shape)
 
+def process_frame(image, sess, logits, keep_prob, input_image, image_shape):
+    result = helper.infer(sess, logits, keep_prob, input_image, image_shape, image)
+    return result
+
+
+def process_video(sess, logits, keep_prob, input_image, image_shape):
+    white_output = 'result_project_video.mp4'
+    ## To speed up the testing process you may want to try your pipeline on a shorter subclip of the video
+    ## To do so add .subclip(start_second,end_second) to the end of the line below
+    ## Where start_second and end_second are integer values representing the start and end of the subclip
+    ## You may also uncomment the following line for a subclip of the first 5 seconds
+    ##clip1 = VideoFileClip("test_videos/solidWhiteRight.mp4").subclip(0,5)
+    clip1 = VideoFileClip("project_video.mp4")
+    white_clip = clip1.fl_image(lambda image: process_frame(image, sess, logits, keep_prob, input_image, image_shape))  # NOTE: this function expects color images!!
+    white_clip.write_videofile(white_output, audio=False)
+    white_clip.reader.close()
+    white_clip.audio.reader.close_proc()
 
 if __name__ == '__main__':
     run()
