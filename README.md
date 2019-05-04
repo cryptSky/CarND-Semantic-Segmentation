@@ -27,8 +27,7 @@ In our case we use the VGG-16 model pretrained on ImageNet as encoder. Then we r
 ##### Training
 
 To train the network i used the cross entropy loss on a  flatten output over different classes.
- I used the Adam optimizer with a fairly low learning rate at 0.0001.
- Also i used a different initializer for the layer's kernel to reduce the standard deviation to 0.01. The default one was giving really slow learning.
+I used the Adam optimizer with a fairly low learning rate at 0.0009.
 
  
 ##### Hyper parameters
@@ -45,4 +44,4 @@ Here some pictures where we can see that the segmentation is really good. I was 
 
 ![Ex1](./images/um_000013.png) 
 ![Ex2](./images/um_000061.png) 
-![Ex3](./images/uu_000089.png)
+![Ex3](./images/um_000089.png)
